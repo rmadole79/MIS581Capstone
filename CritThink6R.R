@@ -20,7 +20,7 @@ library(dplyr)
 library(survival)
 
 #Assign data
-CapstoneData <- read_excel("C:/Users/rmadole/OneDrive - OmniTRAX, Inc/Documents/School/MIS581/CapstoneData.xlsx",
+CapstoneData <- read_excel("C:/Users/rmadole/Documents/School/MIS581/CapstoneData.xlsx",
                            col_types = c("text", "skip", "text",
                                          "date", "date", "text", "text", "numeric"))
 incident_data <- CapstoneData
