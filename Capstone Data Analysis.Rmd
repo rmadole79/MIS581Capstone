@@ -1,0 +1,215 @@
+---
+title: "Capstone Data Analysis"
+output: word_document
+date: "2024-04-29"
+---
+## Rstudio Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(repos = "https://cloud.r=project.org/")
+# Install and load necessary libraries if not already installed
+install.packages("tidyverse")  # for data manipulation and visualization
+install.packages("broom")      # for tidying model output
+install.packages("car")        # for Chi-Square testing
+install.packages("lubridate")  # for timeseries
+install.packages("forecast")
+install.packages("dplyr")
+install.packages("survival")   # for Surval analysis
+install.packages("ggplot2")
+
+# Load libraries
+library(readxl)
+library(tidyverse)
+library(broom)
+library(car)
+library(lubridate)
+library(ggplot2)
+library(forecast)
+library(dplyr)
+library(survival)
+
+
+#Assign data
+CapstoneData <- read_excel("C:/Users/rmadole/OneDrive/Documents/School/MIS581/CapstoneData.xlsx",
+                           col_types = c("text", "skip", "text",
+                                         "date", "date", "text", "text", "numeric"))
+incident_data <- CapstoneData
+```
+
+
+```{r Exploratory Statistics,}
+# View Structure
+str(incident_data)
+
+# Summary of Dataset
+summary(incident_data)
+
+# Frequency of Type
+frequency_type <- table(incident_data$Type)
+print(frequency_type)
+
+# Frequency of Primary Cause
+frequency_pc <- table(incident_data$PrimaryCause)
+print(frequency_pc)
+
+# Frequency of FRA Reportable
+fra_labels <- ifelse(incident_data$FRA_Reportable == 0, "No", "Yes")
+fra_frequency <- table(fra_labels)
+print(fra_frequency)
+```
+
+## Frequency plots
+
+
+```{r Frequency Plots}
+# Primary Cause
+frequency_pc <- table(incident_data$PrimaryCause)
+frequency_pcdf <- as.data.frame(frequency_pc)
+
+
+ggplot(frequency_pcdf, aes(x = Var1, y = Freq)) +
+  geom_bar(
+      stat = "identity", 
+      fill = "skyblue",
+      color = "black"
+      ) +
+  labs(
+    title = "Primary Cause Frequency",
+       x = "Primary Cause",
+       y = "Frequency"
+    ) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 8))
+
+# Type
+frequency_tdf <- as.data.frame(frequency_type)
+
+ggplot(frequency_tdf, aes(x = Var1, y = Freq)) +
+  geom_bar(
+      stat = "identity", 
+      fill = "skyblue",
+      color = "black"
+      ) +
+  labs(
+    title = "Primary Cause Frequency",
+       x = "Primary Cause",
+       y = "Frequency"
+    ) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 8))
+
+# FRA Reportable 
+ggplot(as.data.frame(fra_frequency), aes(x = fra_frequency, y = Freq)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black")+
+  labs(title = "FRA Distribution", x = "FRA Reportable", y = "Frequency")
+```
+## Methods and Findings
+```{r Methods and Findings}
+#cross-tabulation of Primary Cause and FRA Reportable
+threshold <- 1
+binary_vector <- as.integer(incident_data$FRA_Reportable >= threshold)
+FRA_labels <- ifelse(binary_vector == 0,"No","Yes")
+table(incident_data$PrimaryCause, FRA_labels)
+
+#Visualize the relationship
+ggplot(incident_data, aes(x = FRA_labels, fill = PrimaryCause)) +
+  geom_bar(position = "fill") +
+  labs(title = "Proportion of FRA Reportable Incidents by Primary Cause")
+
+# Fit Logistic regression Model
+logit_model <- glm(FRA_Reportable ~ PrimaryCause, data = incident_data, family = "binomial")
+
+#summarize model
+summary(logit_model)
+
+#Interpret the coefficients
+exp(coef(logit_model))  # Exponentiated coefficients as odds ratios
+
+# Predict probabilities for specific scenarios (e.g., "human factors" as PrimaryCause)
+predict(logit_model, newdata = data.frame(PrimaryCause = "Human Factor"), type = "response")
+
+#Create Contingency Table
+contingency_table <- table(incident_data$PrimaryCause,incident_data$FRA_Reportable)
+
+#Chi-Square test
+chisq_test <- chisq.test(contingency_table)
+chisq_test
+
+# calculate Cramer's V for effect size
+cramer_v <- sqrt(chisq_test$statistic / sum(contingency_table))
+cramer_v
+
+#aggregate incidents by month
+monthlycounts <- incident_data %>%
+  group_by(LossDate) %>%
+  summarise(IncidentCount = n()) %>%
+  ungroup()
+
+#create time series
+
+ts_data <- ts(monthlycounts$IncidentCount, frequency = 12, start = c(
+  year(
+    min
+       (monthlycounts$LossDate)),
+  month(min
+        (monthlycounts$LossDate))
+  ))
+
+# Plot the timeseries
+autoplot(ts_data) +
+  labs(title = "Monthly Incident Frequency over Time")
+
+# Decompose the time series to analyze trend, seasonality, and noise
+decom <- decompose(ts_data) 
+plot(decom)
+
+# Compute Incident Frequency
+incident_frequency <- incident_data %>%
+  group_by(Claim) %>%
+  summarise(IncidentCount = n_distinct(Claim))
+print(incident_frequency)
+
+# Sort data by Claim and LossDate
+incidents_data <- incident_data[order(incident_data$Claim, incident_data$LossDate), ]
+
+# Calculate time difference between consecutive incidents for each Claim
+incidents_data$TimeToNextIncident <- c(NA, diff(incidents_data$LossDate))
+
+# Define a binary indicator for subsequent incidents within a certain timeframe
+incidents_data$SubsequentIncident <- ifelse(incidents_data$TimeToNextIncident < 30, 1, 0)
+
+# Merge data
+merged_data <- merge(incident_frequency, incidents_data, by = "Claim", all.x = TRUE)
+
+# Check the structure of merged_data
+str(merged_data)
+
+# Handle missing values (if necessary)
+merged_data1 <- na.omit(merged_data[, c("IncidentCount", "SubsequentIncident")])
+str(merged_data1)
+
+# Calculate correlation between IncidentCount and SubsequentIncidents
+correlation_result <- cor(merged_data1$IncidentCount, merged_data1$SubsequentIncident)
+
+# Print correlation coefficient
+print(correlation_result)
+
+# Survival Analysis
+surv_object <- Surv(time = incidents_data$TimeToNextIncident, event = incidents_data$SubsequentIncident)
+
+# Fit survival model 
+cox_model <- coxph(surv_object ~ IncidentCount, data = merged_data)
+
+# ANOVA Model
+model_anova <- aov(IncidentCount ~ Road, data = merged_data)
+
+# Results
+summary(model_anova)
+
+#Post-hoc analysis
+posthoc<- TukeyHSD(model_anova)
+print(posthoc)
+
+# Kruskal-Wallis Test
+kruskal_test <- kruskal.test(IncidentCount ~ Road, data = merged_data)
+print(kruskal_test)
+```
+
